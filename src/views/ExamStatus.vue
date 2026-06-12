@@ -64,13 +64,16 @@
               </template>
             </el-table-column>
             <el-table-column prop="package_name" label="套餐" width="140" />
-            <el-table-column label="进度" width="180">
+            <el-table-column label="进度" width="200">
               <template #default="{ row }">
                 <el-progress 
-                  :percentage="Math.round(row.completed_items / row.total_items * 100)" 
+                  :percentage="row.total_items ? Math.round(row.completed_items / row.total_items * 100) : 0" 
                   :stroke-width="10"
                   :status="row.completed_items === row.total_items ? 'success' : ''"
                 />
+                <span style="margin-left: 8px; font-size: 12px; color: #909399">
+                  {{ row.completed_items }}/{{ row.total_items }}
+                </span>
               </template>
             </el-table-column>
             <el-table-column label="当前科室" width="120">
@@ -78,11 +81,13 @@
                 {{ row.current_dept || '候检' }}
               </template>
             </el-table-column>
-            <el-table-column prop="status" label="状态" width="100">
+            <el-table-column prop="status" label="预约状态" width="120">
               <template #default="{ row }">
                 <el-tag v-if="row.status === 'scheduled'" size="small" type="info">待体检</el-tag>
                 <el-tag v-else-if="row.status === 'in_progress'" size="small" type="warning">检查中</el-tag>
-                <el-tag v-else-if="row.status === 'all_completed'" size="small" type="success">已完成</el-tag>
+                <el-tag v-else-if="row.status === 'all_completed'" size="small" type="success">全部完成</el-tag>
+                <el-tag v-else-if="row.status === 'all_reported'" size="small" type="primary">报告生成</el-tag>
+                <el-tag v-else-if="row.status === 'chief_reviewed'" size="small" type="success">总检完成</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
@@ -125,87 +130,268 @@
       </el-tabs>
     </el-card>
 
-    <el-dialog v-model="detailVisible" title="体检流程详情" width="700px">
+    <el-dialog v-model="detailVisible" title="体检流程详情" width="900px" @close="onDetailClose">
       <div v-if="currentPatient" class="status-detail">
         <div class="patient-header">
           <div>
             <h3>{{ currentPatient.name }}</h3>
-            <p>{{ currentPatient.appointment_no }} | {{ currentPatient.gender === 'male' ? '男' : '女' }} | {{ currentPatient.package_name }}</p>
+            <p>
+              {{ currentPatient.appointment_no }} | 
+              {{ currentPatient.gender === 'male' ? '男' : '女' }} | 
+              {{ currentPatient.age }}岁 | 
+              {{ currentPatient.package_name }}
+            </p>
           </div>
-          <el-tag :type="currentPatient.status === 'all_completed' ? 'success' : 'warning'" size="large">
-            {{ currentPatient.status === 'all_completed' ? '全部完成' : '检查中' }}
-          </el-tag>
-        </div>
-
-        <el-steps :active="currentStep" direction="vertical" finish-status="success">
-          <el-step title="登记" icon="EditPen">
-            <template #title>
-              <span>登记签到</span>
-            </template>
-            <template #description>
-              <span style="color: #67c23a">已完成</span>
-            </template>
-          </el-step>
-          <el-step title="检查中" icon="Connection">
-            <template #title>
-              <span>项目检查</span>
-            </template>
-            <template #description>
-              <span>{{ currentPatient.completed_items }} / {{ currentPatient.total_items }} 项已完成</span>
-            </template>
-          </el-step>
-          <el-step title="报告生成" icon="Document">
-            <template #title>
-              <span>报告生成</span>
-            </template>
-          </el-step>
-          <el-step title="总检完成" icon="CircleCheck">
-            <template #title>
-              <span>总检完成</span>
-            </template>
-          </el-step>
-        </el-steps>
-
-        <div class="exam-items-list">
-          <h4>项目检查情况</h4>
-          <div 
-            v-for="item in examItems" 
-            :key="item.id" 
-            class="exam-item-row"
-            :class="item.status"
-          >
-            <div class="item-left">
-              <el-icon v-if="item.status === 'completed'" color="#67c23a"><CircleCheckFilled /></el-icon>
-              <el-icon v-else-if="item.status === 'in_progress'" color="#e6a23c" class="rotating"><Loading /></el-icon>
-              <el-icon v-else color="#c0c4cc"><Clock /></el-icon>
-              <span class="item-name">{{ item.exam_item_name }}</span>
-              <el-tag v-if="item.is_abnormal" size="small" type="danger">异常</el-tag>
-            </div>
-            <div class="item-right">
-              <span class="item-dept">{{ item.department }}</span>
-              <span class="item-time">{{ item.start_time || '--:--' }}</span>
-            </div>
+          <div>
+            <el-tag :type="getStatusTagType(currentPatient.status)" size="large">
+              {{ getStatusText(currentPatient.status) }}
+            </el-tag>
           </div>
         </div>
+
+        <div class="progress-bar-row">
+          <div class="progress-label">
+            整体进度：{{ currentPatient.completed_items }} / {{ currentPatient.total_items }} 项
+          </div>
+          <el-progress 
+            :percentage="currentPatient.total_items ? Math.round(currentPatient.completed_items / currentPatient.total_items * 100) : 0"
+            :stroke-width="12"
+          />
+        </div>
+
+        <el-tabs v-model="detailTab" class="detail-tabs">
+          <el-tab-pane label="项目检查" name="items">
+            <div class="exam-items-list">
+              <div 
+                v-for="item in examItems" 
+                :key="item.id" 
+                class="exam-item-row"
+                :class="item.status"
+              >
+                <div class="item-left">
+                  <el-icon v-if="item.status === 'completed'" color="#67c23a" :size="18"><CircleCheckFilled /></el-icon>
+                  <el-icon v-else-if="item.status === 'in_progress'" color="#e6a23c" :size="18" class="rotating"><Loading /></el-icon>
+                  <el-icon v-else-if="item.status === 'report_generated'" color="#409eff" :size="18"><Document /></el-icon>
+                  <el-icon v-else color="#c0c4cc" :size="18"><Clock /></el-icon>
+                  <span class="item-name">{{ item.exam_item_name }}</span>
+                  <el-tag v-if="item.is_abnormal && item.status === 'completed'" size="small" type="danger" effect="dark">
+                    异常
+                  </el-tag>
+                  <el-tag v-if="item.status === 'report_generated'" size="small" type="primary" effect="plain">
+                    报告已出
+                  </el-tag>
+                </div>
+                <div class="item-center">
+                  <span class="item-dept">{{ item.department }}</span>
+                  <span class="item-time">{{ item.start_time || '--:--' }} - {{ item.end_time || '--:--' }}</span>
+                </div>
+                <div class="item-actions">
+                  <el-button 
+                    v-if="item.status === 'pending' || item.status === 'waiting'" 
+                    size="small" 
+                    type="primary" 
+                    @click="startExam(item)"
+                  >
+                    开始检查
+                  </el-button>
+                  <el-button 
+                    v-if="item.status === 'in_progress'" 
+                    size="small" 
+                    type="success" 
+                    @click="completeExam(item)"
+                  >
+                    完成检查
+                  </el-button>
+                  <el-button 
+                    v-if="item.status === 'completed'" 
+                    size="small" 
+                    type="primary" 
+                    plain
+                    @click="openResultDialog(item)"
+                  >
+                    录入结果
+                  </el-button>
+                  <el-button 
+                    v-if="item.status === 'completed' && !item.report_generated" 
+                    size="small" 
+                    type="success" 
+                    plain
+                    @click="generateReport(item)"
+                  >
+                    生成报告
+                  </el-button>
+                  <el-button size="small" @click="viewItemDetail(item)">详情</el-button>
+                </div>
+              </div>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="检验结果" name="results">
+            <div v-if="examResults.length === 0" class="empty-tip">
+              暂无检验结果数据
+            </div>
+            <div v-else class="results-list">
+              <div 
+                v-for="result in examResults" 
+                :key="result.id" 
+                class="result-item"
+                :class="result.abnormal_level"
+              >
+                <div class="result-header">
+                  <span class="result-name">{{ result.item_name }}</span>
+                  <el-tag v-if="result.result_status === 'normal'" type="success" size="small">正常</el-tag>
+                  <el-tag v-else-if="result.abnormal_level === 'critical'" type="danger" effect="dark" size="small">危急</el-tag>
+                  <el-tag v-else-if="result.abnormal_level === 'high'" type="warning" size="small">偏高</el-tag>
+                  <el-tag v-else-if="result.abnormal_level === 'low'" type="info" size="small">偏低</el-tag>
+                </div>
+                <div class="result-body">
+                  <div class="result-value">
+                    <span class="value-num">{{ result.result_value || '--' }}</span>
+                    <span class="value-unit">{{ result.result_unit || '' }}</span>
+                  </div>
+                  <div class="result-range">
+                    参考范围：{{ result.normal_range || '无' }}
+                  </div>
+                </div>
+                <div v-if="result.description" class="result-desc">
+                  {{ result.description }}
+                </div>
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="resultDialogVisible" title="录入检验结果" width="600px">
+      <el-form :model="resultForm" label-width="100px" v-if="currentItem">
+        <el-form-item label="检查项目">
+          <span>{{ currentItem.exam_item_name }}</span>
+        </el-form-item>
+        <el-form-item label="结果数值">
+          <el-input v-model="resultForm.result_value" placeholder="请输入数值结果">
+            <template #append>
+              <el-select v-model="resultForm.result_unit" placeholder="单位" style="width: 100px">
+                <el-option label="mmol/L" value="mmol/L" />
+                <el-option label="mg/dL" value="mg/dL" />
+                <el-option label="U/L" value="U/L" />
+                <el-option label="μmol/L" value="μmol/L" />
+                <el-option label="mmHg" value="mmHg" />
+                <el-option label="kg/m²" value="kg/m²" />
+                <el-option label="次/分" value="次/分" />
+              </el-select>
+            </template>
+          </el-input>
+        </el-form-item>
+        <el-form-item v-if="checkResult.isNormal !== null" label="结果判定">
+          <el-tag :type="checkResult.isNormal ? 'success' : 'danger'" size="large">
+            {{ checkResult.message }}
+          </el-tag>
+          <span v-if="!checkResult.isNormal" style="margin-left: 12px; color: #909399; font-size: 12px">
+            参考范围：{{ checkResult.range }}
+          </span>
+        </el-form-item>
+        <el-form-item label="异常级别">
+          <el-radio-group v-model="resultForm.abnormal_level">
+            <el-radio value="normal">正常</el-radio>
+            <el-radio value="low">偏低</el-radio>
+            <el-radio value="high">偏高</el-radio>
+            <el-radio value="critical">危急</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="结果描述">
+          <el-input 
+            v-model="resultForm.description" 
+            type="textarea" 
+            :rows="3" 
+            placeholder="请输入检查结果描述或备注"
+          />
+        </el-form-item>
+        <el-form-item label="操作人员">
+          <el-input v-model="resultForm.operator" placeholder="请输入操作人姓名" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="resultDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitResult">提交结果</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="itemDetailVisible" title="检查项目详情" width="500px">
+      <div v-if="currentItem" class="item-detail-content">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="项目名称">{{ currentItem.exam_item_name }}</el-descriptions-item>
+          <el-descriptions-item label="所属科室">{{ currentItem.department }}</el-descriptions-item>
+          <el-descriptions-item label="计划时间">
+            {{ currentItem.start_time }} - {{ currentItem.end_time }}
+          </el-descriptions-item>
+          <el-descriptions-item label="检查医生">
+            {{ currentItem.doctor_name || '待分配' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="诊室">{{ currentItem.room || currentItem.equipment_room || '--' }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="getItemStatusTagType(currentItem.status)" size="small">
+              {{ getItemStatusText(currentItem.status) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="currentItem.actual_start_time" label="实际开始">
+            {{ currentItem.actual_start_time }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="currentItem.actual_end_time" label="实际结束">
+            {{ currentItem.actual_end_time }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="currentItem.result" label="检查结果" :span="2">
+            {{ currentItem.result }}
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, UserFilled, CircleCheckFilled, Loading, Clock, Document } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const activeTab = ref('patient')
 const detailVisible = ref(false)
+const detailTab = ref('items')
 const currentPatient = ref(null)
 const examItems = ref([])
+const examResults = ref([])
+const resultDialogVisible = ref(false)
+const itemDetailVisible = ref(false)
+const currentItem = ref(null)
 let refreshTimer = null
 
 const patientList = ref([])
+
+const resultForm = reactive({
+  result_value: '',
+  result_unit: '',
+  abnormal_level: 'normal',
+  description: '',
+  operator: ''
+})
+
+const checkResult = computed(() => {
+  if (!currentItem.value || !resultForm.result_value) {
+    return { isNormal: null, message: '', level: 'normal' }
+  }
+  const itemCode = currentItem.value.exam_item_code || ''
+  const gender = currentPatient.value?.gender || 'all'
+  const age = currentPatient.value?.age || 30
+  
+  if (window.api && window.api.normalRange) {
+    return { isNormal: null, message: '', level: 'normal' }
+  }
+  return { isNormal: null, message: '', level: 'normal' }
+})
 
 const overview = reactive({
   total: 0,
@@ -225,13 +411,6 @@ const deptList = ref([
   { name: '内科', checking: 1, completed: 10, queue: 0, avgWait: 2, heat: 25 }
 ])
 
-const currentStep = computed(() => {
-  if (!currentPatient.value) return 0
-  if (currentPatient.value.status === 'all_completed') return 3
-  if (currentPatient.value.completed_items > 0) return 1
-  return 0
-})
-
 const loadData = async () => {
   loading.value = true
   try {
@@ -242,6 +421,16 @@ const loadData = async () => {
       overview.completed = data.filter(d => d.completed_items === d.total_items).length
       overview.inProgress = data.filter(d => d.status === 'in_progress').length
       overview.waiting = data.filter(d => d.status === 'scheduled').length
+      
+      let abnormalCount = 0
+      for (const p of data) {
+        const items = await window.api.examStatus.getByAppointment(p.id)
+        abnormalCount += items.filter(i => i.is_abnormal).length
+      }
+      overview.abnormal = abnormalCount
+      
+      const alerts = await window.api.examStatus.getAlerts()
+      overview.alerts = alerts.filter(a => a.type !== 'supply').length
     } else {
       patientList.value = mockPatients
       overview.total = mockPatients.length
@@ -260,16 +449,213 @@ const loadData = async () => {
 
 const refreshData = () => {
   loadData()
+  if (detailVisible.value && currentPatient.value) {
+    loadExamItems(currentPatient.value.id)
+  }
+}
+
+const loadExamItems = async (appointmentId) => {
+  if (window.api) {
+    examItems.value = await window.api.examStatus.getByAppointment(appointmentId)
+    examResults.value = await window.api.examResult.list(appointmentId)
+  } else {
+    examItems.value = mockExamItems
+    examResults.value = mockExamResults
+  }
 }
 
 const viewStatus = async (row) => {
   currentPatient.value = row
-  if (window.api) {
-    examItems.value = await window.api.examStatus.getByAppointment(row.id)
-  } else {
-    examItems.value = mockExamItems
-  }
+  await loadExamItems(row.id)
   detailVisible.value = true
+}
+
+const onDetailClose = () => {
+  currentPatient.value = null
+  examItems.value = []
+  examResults.value = []
+}
+
+const startExam = async (item) => {
+  try {
+    if (window.api) {
+      await window.api.examStatus.update(item.id, 'in_progress', { operator: '护士站' })
+    }
+    item.status = 'in_progress'
+    item.actual_start_time = new Date().toLocaleString()
+    
+    if (currentPatient.value) {
+      if (currentPatient.value.status === 'scheduled') {
+        currentPatient.value.status = 'in_progress'
+      }
+    }
+    
+    ElMessage.success('已开始检查')
+    await loadData()
+  } catch (e) {
+    ElMessage.error('操作失败: ' + e.message)
+  }
+}
+
+const completeExam = async (item) => {
+  try {
+    if (window.api) {
+      await window.api.examStatus.update(item.id, 'completed', { operator: '检查医生' })
+    }
+    item.status = 'completed'
+    item.actual_end_time = new Date().toLocaleString()
+    
+    if (currentPatient.value) {
+      currentPatient.value.completed_items = (currentPatient.value.completed_items || 0) + 1
+      const total = currentPatient.value.total_items
+      if (currentPatient.value.completed_items >= total) {
+        currentPatient.value.status = 'all_completed'
+      }
+    }
+    
+    ElMessage.success('检查已完成，耗材已自动扣减')
+    await loadData()
+  } catch (e) {
+    ElMessage.error('操作失败: ' + e.message)
+  }
+}
+
+const generateReport = async (item) => {
+  try {
+    if (window.api) {
+      await window.api.examStatus.update(item.id, 'report_generated', { operator: '检验科' })
+    }
+    item.report_generated = 1
+    item.status = 'report_generated'
+    item.report_time = new Date().toLocaleString()
+    
+    ElMessage.success('报告已生成')
+    
+    const allReported = examItems.value.every(i => i.report_generated || i.status === 'report_generated')
+    if (allReported && currentPatient.value) {
+      currentPatient.value.status = 'all_reported'
+      ElMessage.success('所有项目报告已生成，已推送至总检医师')
+    }
+    
+    await loadData()
+  } catch (e) {
+    ElMessage.error('操作失败: ' + e.message)
+  }
+}
+
+const openResultDialog = (item) => {
+  currentItem.value = item
+  resultForm.result_value = ''
+  resultForm.result_unit = ''
+  resultForm.abnormal_level = 'normal'
+  resultForm.description = ''
+  resultForm.operator = ''
+  resultDialogVisible.value = true
+}
+
+const submitResult = async () => {
+  if (!currentItem.value) return
+  
+  try {
+    if (window.api) {
+      await window.api.examResult.create({
+        exam_schedule_id: currentItem.value.id,
+        appointment_id: currentPatient.value.id,
+        exam_item_id: currentItem.value.exam_item_id,
+        item_name: currentItem.value.exam_item_name,
+        result_value: resultForm.result_value,
+        result_unit: resultForm.result_unit,
+        result_status: resultForm.abnormal_level === 'normal' ? 'normal' : 'abnormal',
+        abnormal_level: resultForm.abnormal_level,
+        normal_range: '',
+        description: resultForm.description,
+        operator: resultForm.operator || '系统'
+      })
+      
+      if (resultForm.abnormal_level !== 'normal') {
+        await window.api.examStatus.update(currentItem.value.id, 'completed', {
+          is_abnormal: true,
+          abnormal_level: resultForm.abnormal_level,
+          result: resultForm.result_value
+        })
+      }
+    }
+    
+    const newResult = {
+      id: Date.now(),
+      item_name: currentItem.value.exam_item_name,
+      result_value: resultForm.result_value,
+      result_unit: resultForm.result_unit,
+      result_status: resultForm.abnormal_level === 'normal' ? 'normal' : 'abnormal',
+      abnormal_level: resultForm.abnormal_level,
+      normal_range: '',
+      description: resultForm.description
+    }
+    examResults.value.push(newResult)
+    
+    if (resultForm.abnormal_level !== 'normal') {
+      const item = examItems.value.find(i => i.id === currentItem.value.id)
+      if (item) {
+        item.is_abnormal = 1
+        item.abnormal_level = resultForm.abnormal_level
+      }
+    }
+    
+    resultDialogVisible.value = false
+    ElMessage.success('结果提交成功')
+    await loadData()
+  } catch (e) {
+    ElMessage.error('提交失败: ' + e.message)
+  }
+}
+
+const viewItemDetail = (item) => {
+  currentItem.value = item
+  itemDetailVisible.value = true
+}
+
+const getStatusTagType = (status) => {
+  const map = {
+    'scheduled': 'info',
+    'in_progress': 'warning',
+    'all_completed': 'success',
+    'all_reported': 'primary',
+    'chief_reviewed': 'success'
+  }
+  return map[status] || 'info'
+}
+
+const getStatusText = (status) => {
+  const map = {
+    'scheduled': '待体检',
+    'in_progress': '检查中',
+    'all_completed': '全部完成',
+    'all_reported': '报告已生成',
+    'chief_reviewed': '总检完成'
+  }
+  return map[status] || status
+}
+
+const getItemStatusTagType = (status) => {
+  const map = {
+    'pending': 'info',
+    'waiting': 'info',
+    'in_progress': 'warning',
+    'completed': 'success',
+    'report_generated': 'primary'
+  }
+  return map[status] || 'info'
+}
+
+const getItemStatusText = (status) => {
+  const map = {
+    'pending': '待检查',
+    'waiting': '候检中',
+    'in_progress': '检查中',
+    'completed': '已完成',
+    'report_generated': '报告已生成'
+  }
+  return map[status] || status
 }
 
 const getDeptStatusClass = (dept) => {
@@ -279,22 +665,28 @@ const getDeptStatusClass = (dept) => {
 }
 
 const mockPatients = [
-  { id: 1, appointment_no: 'TJ202401150001', name: '张三', gender: 'male', package_name: '标准体检套餐B', total_items: 15, completed_items: 15, status: 'all_completed', current_dept: '已完成', first_time: '07:30' },
-  { id: 2, appointment_no: 'TJ202401150002', name: '李四', gender: 'female', package_name: '基础体检套餐A', total_items: 12, completed_items: 8, status: 'in_progress', current_dept: '超声科', first_time: '07:35' },
-  { id: 3, appointment_no: 'TJ202401150003', name: '王五', gender: 'male', package_name: '精英体检套餐C', total_items: 18, completed_items: 5, status: 'in_progress', current_dept: '检验科', first_time: '07:40' },
-  { id: 4, appointment_no: 'TJ202401150004', name: '赵六', gender: 'female', package_name: '标准体检套餐B', total_items: 15, completed_items: 0, status: 'scheduled', current_dept: '', first_time: '07:45' },
-  { id: 5, appointment_no: 'TJ202401150005', name: '钱七', gender: 'male', package_name: '基础体检套餐A', total_items: 12, completed_items: 10, status: 'in_progress', current_dept: '放射科', first_time: '07:50' }
+  { id: 1, appointment_no: 'TJ202401150001', name: '张三', gender: 'male', age: 35, package_name: '标准体检套餐B', total_items: 15, completed_items: 15, status: 'all_completed', current_dept: '已完成', first_time: '07:30' },
+  { id: 2, appointment_no: 'TJ202401150002', name: '李四', gender: 'female', age: 28, package_name: '基础体检套餐A', total_items: 12, completed_items: 8, status: 'in_progress', current_dept: '超声科', first_time: '07:35' },
+  { id: 3, appointment_no: 'TJ202401150003', name: '王五', gender: 'male', age: 45, package_name: '精英体检套餐C', total_items: 18, completed_items: 5, status: 'in_progress', current_dept: '检验科', first_time: '07:40' },
+  { id: 4, appointment_no: 'TJ202401150004', name: '赵六', gender: 'female', age: 32, package_name: '标准体检套餐B', total_items: 15, completed_items: 0, status: 'scheduled', current_dept: '', first_time: '07:45' },
+  { id: 5, appointment_no: 'TJ202401150005', name: '钱七', gender: 'male', age: 40, package_name: '基础体检套餐A', total_items: 12, completed_items: 10, status: 'in_progress', current_dept: '放射科', first_time: '07:50' }
 ]
 
 const mockExamItems = [
-  { id: 1, exam_item_name: '身高体重', department: '一般检查', status: 'completed', start_time: '07:30', is_abnormal: 0 },
-  { id: 2, exam_item_name: '血压', department: '一般检查', status: 'completed', start_time: '07:35', is_abnormal: 0 },
-  { id: 3, exam_item_name: '血常规', department: '检验科', status: 'completed', start_time: '07:40', is_abnormal: 0 },
-  { id: 4, exam_item_name: '肝功能', department: '检验科', status: 'completed', start_time: '07:50', is_abnormal: 1 },
-  { id: 5, exam_item_name: '空腹血糖', department: '检验科', status: 'completed', start_time: '08:00', is_abnormal: 0 },
-  { id: 6, exam_item_name: '腹部彩超', department: '超声科', status: 'in_progress', start_time: '08:10', is_abnormal: 0 },
-  { id: 7, exam_item_name: '心电图', department: '功能科', status: 'pending', start_time: null, is_abnormal: 0 },
-  { id: 8, exam_item_name: '胸部CT', department: '放射科', status: 'pending', start_time: null, is_abnormal: 0 }
+  { id: 1, exam_item_name: '身高体重', exam_item_code: 'HW', department: '一般检查', status: 'completed', start_time: '07:30', end_time: '07:35', is_abnormal: 0, doctor_name: '张医生', room: '一般-1室' },
+  { id: 2, exam_item_name: '血压', exam_item_code: 'BP', department: '一般检查', status: 'completed', start_time: '07:35', end_time: '07:40', is_abnormal: 0, doctor_name: '张医生', room: '一般-1室' },
+  { id: 3, exam_item_name: '血常规', exam_item_code: 'CBC', department: '检验科', status: 'completed', start_time: '07:40', end_time: '07:50', is_abnormal: 0, doctor_name: '刘医生', room: '检验-1室' },
+  { id: 4, exam_item_name: '肝功能', exam_item_code: 'LIVER', department: '检验科', status: 'completed', start_time: '07:50', end_time: '08:05', is_abnormal: 1, abnormal_level: 'high', doctor_name: '刘医生', room: '检验-1室' },
+  { id: 5, exam_item_name: '空腹血糖', exam_item_code: 'FBG', department: '检验科', status: 'completed', start_time: '08:05', end_time: '08:15', is_abnormal: 0, doctor_name: '刘医生', room: '检验-1室' },
+  { id: 6, exam_item_name: '腹部彩超', exam_item_code: 'ABD_US', department: '超声科', status: 'in_progress', start_time: '08:20', end_time: '08:40', is_abnormal: 0, doctor_name: '王医生', room: '超声-1室' },
+  { id: 7, exam_item_name: '心电图', exam_item_code: 'ECG', department: '功能科', status: 'pending', start_time: '08:40', end_time: '08:50', is_abnormal: 0, doctor_name: '陈医生', room: '心电-1室' },
+  { id: 8, exam_item_name: '胸部CT', exam_item_code: 'CHEST_CT', department: '放射科', status: 'pending', start_time: '09:00', end_time: '09:15', is_abnormal: 0, doctor_name: '赵医生', room: 'CT-1室' }
+]
+
+const mockExamResults = [
+  { id: 1, item_name: '身高体重', result_value: '175/70', result_unit: 'cm/kg', result_status: 'normal', abnormal_level: 'normal', description: '身高体重正常，BMI 22.9' },
+  { id: 2, item_name: '血压', result_value: '120/80', result_unit: 'mmHg', result_status: 'normal', abnormal_level: 'normal', description: '血压正常' },
+  { id: 3, item_name: '肝功能-ALT', result_value: '52', result_unit: 'U/L', result_status: 'abnormal', abnormal_level: 'high', normal_range: '0-40 U/L', description: '谷丙转氨酶偏高，建议复查' }
 ]
 
 onMounted(() => {
@@ -435,7 +827,7 @@ onUnmounted(() => {
   align-items: center;
   padding-bottom: 16px;
   border-bottom: 1px solid #ebeef5;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .patient-header h3 {
@@ -447,15 +839,26 @@ onUnmounted(() => {
 .patient-header p {
   color: #909399;
   font-size: 14px;
+  margin: 0;
+}
+
+.progress-bar-row {
+  margin-bottom: 16px;
+}
+
+.progress-label {
+  font-size: 14px;
+  color: #606266;
+  margin-bottom: 8px;
+}
+
+.detail-tabs {
+  margin-top: 10px;
 }
 
 .exam-items-list {
-  margin-top: 20px;
-}
-
-.exam-items-list h4 {
-  margin-bottom: 12px;
-  color: #303133;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .exam-item-row {
@@ -466,6 +869,7 @@ onUnmounted(() => {
   background: #f5f7fa;
   border-radius: 6px;
   margin-bottom: 8px;
+  transition: all 0.3s;
 }
 
 .exam-item-row.completed {
@@ -476,22 +880,45 @@ onUnmounted(() => {
   background: #fdf6ec;
 }
 
+.exam-item-row.report_generated {
+  background: #ecf5ff;
+}
+
 .item-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
 }
 
 .item-name {
   font-weight: 500;
   color: #303133;
+  font-size: 14px;
 }
 
-.item-right {
-  display: flex;
-  gap: 20px;
+.item-center {
+  flex: 1;
+  text-align: center;
   font-size: 13px;
   color: #909399;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.item-dept {
+  font-size: 12px;
+  color: #606266;
+}
+
+.item-time {
+  font-size: 12px;
+}
+
+.item-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .rotating {
@@ -501,5 +928,88 @@ onUnmounted(() => {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+.results-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.result-item {
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  border-left: 4px solid #e4e7ed;
+  background: #fafafa;
+}
+
+.result-item.normal {
+  border-left-color: #67c23a;
+  background: #f0f9eb;
+}
+
+.result-item.high,
+.result-item.low {
+  border-left-color: #e6a23c;
+  background: #fdf6ec;
+}
+
+.result-item.critical {
+  border-left-color: #f56c6c;
+  background: #fef0f0;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.result-name {
+  font-weight: 600;
+  color: #303133;
+  font-size: 15px;
+}
+
+.result-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.value-num {
+  font-size: 24px;
+  font-weight: bold;
+  color: #303133;
+}
+
+.value-unit {
+  font-size: 14px;
+  color: #909399;
+  margin-left: 4px;
+}
+
+.result-range {
+  font-size: 13px;
+  color: #909399;
+}
+
+.result-desc {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #dcdfe6;
+  color: #606266;
+  font-size: 13px;
+}
+
+.empty-tip {
+  text-align: center;
+  padding: 40px;
+  color: #909399;
+}
+
+.item-detail-content {
+  padding: 10px 0;
 }
 </style>

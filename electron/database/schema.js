@@ -55,6 +55,7 @@ export function initTables(db) {
       department TEXT NOT NULL,
       gender TEXT,
       phone TEXT,
+      role TEXT DEFAULT 'doctor',
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -105,7 +106,14 @@ export function initTables(db) {
       actual_end_time TEXT,
       result TEXT,
       is_abnormal INTEGER DEFAULT 0,
+      abnormal_level TEXT DEFAULT 'normal',
       approval_status TEXT DEFAULT 'pending',
+      dept_confirm_status TEXT DEFAULT 'pending',
+      report_generated INTEGER DEFAULT 0,
+      report_time TEXT,
+      chief_reviewed INTEGER DEFAULT 0,
+      chief_review_time TEXT,
+      chief_doctor_id INTEGER,
       FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
       FOREIGN KEY (exam_item_id) REFERENCES exam_items(id),
       FOREIGN KEY (doctor_id) REFERENCES doctors(id),
@@ -122,12 +130,77 @@ export function initTables(db) {
       FOREIGN KEY (exam_schedule_id) REFERENCES exam_schedules(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS schedule_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      exam_schedule_id INTEGER NOT NULL,
+      appointment_id INTEGER NOT NULL,
+      apply_dept TEXT NOT NULL,
+      apply_doctor_id INTEGER,
+      apply_reason TEXT NOT NULL,
+      original_start_time TEXT,
+      original_end_time TEXT,
+      original_room TEXT,
+      original_doctor_id INTEGER,
+      new_start_time TEXT,
+      new_end_time TEXT,
+      new_room TEXT,
+      new_doctor_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      approve_doctor_id INTEGER,
+      approve_remark TEXT,
+      approve_time TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (exam_schedule_id) REFERENCES exam_schedules(id),
+      FOREIGN KEY (appointment_id) REFERENCES appointments(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS exam_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      exam_schedule_id INTEGER NOT NULL,
+      appointment_id INTEGER NOT NULL,
+      exam_item_id INTEGER NOT NULL,
+      item_name TEXT NOT NULL,
+      result_value TEXT,
+      result_unit TEXT,
+      result_status TEXT DEFAULT 'normal',
+      abnormal_level TEXT DEFAULT 'normal',
+      normal_range TEXT,
+      description TEXT,
+      operator TEXT,
+      report_time TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (exam_schedule_id) REFERENCES exam_schedules(id),
+      FOREIGN KEY (appointment_id) REFERENCES appointments(id),
+      FOREIGN KEY (exam_item_id) REFERENCES exam_items(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS normal_ranges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      exam_item_id INTEGER,
+      item_code TEXT,
+      item_name TEXT NOT NULL,
+      gender TEXT DEFAULT 'all',
+      min_age INTEGER DEFAULT 0,
+      max_age INTEGER DEFAULT 200,
+      min_value REAL,
+      max_value REAL,
+      unit TEXT,
+      normal_description TEXT,
+      abnormal_low TEXT,
+      abnormal_high TEXT,
+      critical_low REAL,
+      critical_high REAL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS alerts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL,
       level TEXT NOT NULL DEFAULT 'normal',
       content TEXT NOT NULL,
       related_id INTEGER,
+      related_type TEXT,
+      target_role TEXT DEFAULT 'all',
       is_read INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -139,7 +212,42 @@ export function initTables(db) {
       unit TEXT NOT NULL,
       stock INTEGER NOT NULL DEFAULT 0,
       safety_stock INTEGER NOT NULL DEFAULT 100,
-      unit_price REAL DEFAULT 0
+      unit_price REAL DEFAULT 0,
+      related_dept TEXT,
+      usage_per_exam REAL DEFAULT 1,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS supply_usage_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supply_id INTEGER NOT NULL,
+      exam_schedule_id INTEGER,
+      appointment_id INTEGER,
+      quantity INTEGER NOT NULL,
+      operator TEXT,
+      remark TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (supply_id) REFERENCES supplies(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS satisfaction_surveys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      appointment_id INTEGER,
+      overall_score INTEGER,
+      department_score TEXT,
+      comment TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS chief_review_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      appointment_id INTEGER NOT NULL,
+      patient_name TEXT,
+      abnormal_count INTEGER DEFAULT 0,
+      critical_count INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'pending',
+      assigned_doctor_id INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `
   
@@ -245,22 +353,23 @@ export function seedData(db) {
   })
 
   const doctors = [
-    ['张医生', '主任医师', '内科', 'male', '13800000001'],
-    ['李医生', '副主任医师', '外科', 'female', '13800000002'],
-    ['王医生', '主治医师', '超声科', 'female', '13800000003'],
-    ['赵医生', '主治医师', '放射科', 'male', '13800000004'],
-    ['陈医生', '主治医师', '功能科', 'female', '13800000005'],
-    ['刘医生', '主任技师', '检验科', 'male', '13800000006'],
-    ['孙医生', '主治医师', '眼科', 'female', '13800000007'],
-    ['周医生', '主治医师', '耳鼻喉科', 'male', '13800000008'],
-    ['吴医生', '主治医师', '口腔科', 'female', '13800000009'],
-    ['郑医生', '主任医师', '妇科', 'female', '13800000010']
+    ['张医生', '主任医师', '内科', 'male', '13800000001', 'doctor'],
+    ['李医生', '副主任医师', '外科', 'female', '13800000002', 'doctor'],
+    ['王医生', '主治医师', '超声科', 'female', '13800000003', 'doctor'],
+    ['赵医生', '主治医师', '放射科', 'male', '13800000004', 'doctor'],
+    ['陈医生', '主治医师', '功能科', 'female', '13800000005', 'doctor'],
+    ['刘医生', '主任技师', '检验科', 'male', '13800000006', 'doctor'],
+    ['孙医生', '主治医师', '眼科', 'female', '13800000007', 'doctor'],
+    ['周医生', '主治医师', '耳鼻喉科', 'male', '13800000008', 'doctor'],
+    ['吴医生', '主治医师', '口腔科', 'female', '13800000009', 'doctor'],
+    ['郑医生', '主任医师', '妇科', 'female', '13800000010', 'doctor'],
+    ['黄主任', '主任医师', '总检中心', 'male', '13800000011', 'chief']
   ]
 
   doctors.forEach(d => {
     const stmt = db.prepare(`
-      INSERT INTO doctors (name, title, department, gender, phone)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO doctors (name, title, department, gender, phone, role)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
     stmt.bind(d)
     stmt.step()
@@ -268,19 +377,85 @@ export function seedData(db) {
   })
 
   const supplies = [
-    ['真空采血管-紫色', 'TUBE_PURPLE', '支', 5000, 500, 1.5],
-    ['真空采血管-黄色', 'TUBE_YELLOW', '支', 5000, 500, 1.5],
-    ['超声耦合剂', 'COUPLING', '瓶', 200, 50, 35.0],
-    ['一次性尿杯', 'URINE_CUP', '个', 8000, 1000, 0.3]
+    ['真空采血管-紫色', 'TUBE_PURPLE', '支', 485, 500, 1.5, '检验科', 2],
+    ['真空采血管-黄色', 'TUBE_YELLOW', '支', 520, 500, 1.5, '检验科', 3],
+    ['超声耦合剂', 'COUPLING', '瓶', 42, 50, 35.0, '超声科', 0.1],
+    ['一次性尿杯', 'URINE_CUP', '个', 860, 1000, 0.3, '检验科', 1],
+    ['一次性手套', 'GLOVES', '副', 180, 200, 0.8, null, 1],
+    ['一次性口罩', 'MASK', '个', 850, 500, 0.5, null, 1]
   ]
 
   supplies.forEach(s => {
     const stmt = db.prepare(`
-      INSERT INTO supplies (name, code, unit, stock, safety_stock, unit_price)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO supplies (name, code, unit, stock, safety_stock, unit_price, related_dept, usage_per_exam)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.bind(s)
     stmt.step()
     stmt.free()
   })
+
+  const normalRanges = [
+    [itemIds.FBG, 'FBG', '空腹血糖', 'all', 0, 200, 3.9, 6.1, 'mmol/L', '血糖正常', '偏低', '偏高', 2.8, 11.1],
+    [itemIds.LIPID, 'CHOL', '总胆固醇', 'all', 0, 200, 2.8, 5.2, 'mmol/L', '正常', '偏低', '偏高', null, 6.2],
+    [itemIds.LIVER, 'ALT', '谷丙转氨酶', 'all', 0, 200, 0, 40, 'U/L', '正常', null, '偏高', null, 80],
+    [itemIds.LIVER, 'AST', '谷草转氨酶', 'all', 0, 200, 0, 37, 'U/L', '正常', null, '偏高', null, 74],
+    [itemIds.KIDNEY, 'CREA', '肌酐', 'all', 0, 200, 44, 133, 'μmol/L', '正常', null, '偏高', null, 180],
+    [itemIds.BP, 'SBP', '收缩压', 'all', 18, 200, 90, 120, 'mmHg', '正常', '偏低', '偏高', null, 160],
+    [itemIds.BP, 'DBP', '舒张压', 'all', 18, 200, 60, 80, 'mmHg', '正常', '偏低', '偏高', null, 100],
+    [itemIds.HW, 'BMI', '体重指数', 'all', 18, 200, 18.5, 23.9, 'kg/m²', '正常', '偏瘦', '超重', null, 30]
+  ]
+
+  normalRanges.forEach(r => {
+    const stmt = db.prepare(`
+      INSERT INTO normal_ranges (exam_item_id, item_code, item_name, gender, min_age, max_age, min_value, max_value, unit, normal_description, abnormal_low, abnormal_high, critical_low, critical_high)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    stmt.bind(r)
+    stmt.step()
+    stmt.free()
+  })
+
+  const sampleAppts = [
+    ['张三', 'male', 35, '110101199001010001', '13800000001', pkgIds[1], dayjsDate(-1), '上午', 1, ''],
+    ['李四', 'female', 28, '110101199501010002', '13800000002', pkgIds[0], dayjsDate(-1), '上午', 1, ''],
+    ['王五', 'male', 45, '110101198001010003', '13800000003', pkgIds[2], dayjsDate(-1), '上午', 1, ''],
+    ['赵六', 'female', 32, '110101199201010004', '13800000004', pkgIds[1], dayjsDate(-1), '下午', 0, '']
+  ]
+
+  sampleAppts.forEach((a, idx) => {
+    const apptNo = 'TJ' + a[6].replace(/-/g, '') + String(idx + 1).padStart(4, '0')
+    const stmt = db.prepare(`
+      INSERT INTO appointments (appointment_no, name, gender, age, id_card, phone, package_id, appointment_date, time_slot, status, fasting, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)
+    `)
+    stmt.bind([apptNo, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9]])
+    stmt.step()
+    stmt.free()
+  })
+
+  const alerts = [
+    ['supply', 'warning', '真空采血管-紫色 库存低于安全线，剩余485支，请及时采购', null, null, 'admin'],
+    ['supply', 'danger', '超声耦合剂 库存不足，剩余42瓶', null, null, 'admin'],
+    ['supply', 'info', '一次性尿杯 库存充足，剩余860个', null, null, 'admin']
+  ]
+
+  alerts.forEach(a => {
+    const stmt = db.prepare(`
+      INSERT INTO alerts (type, level, content, related_id, related_type, target_role)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    stmt.bind(a)
+    stmt.step()
+    stmt.free()
+  })
+}
+
+function dayjsDate(offsetDays) {
+  const date = new Date()
+  date.setDate(date.getDate() + offsetDays)
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }

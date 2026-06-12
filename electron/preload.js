@@ -24,6 +24,7 @@ const api = {
   },
   doctor: {
     list: () => ipcRenderer.invoke('doctor:list'),
+    chiefDoctors: () => ipcRenderer.invoke('doctor:chiefDoctors'),
     get: (id) => ipcRenderer.invoke('doctor:get', id),
     create: (data) => ipcRenderer.invoke('doctor:create', data),
     update: (id, data) => ipcRenderer.invoke('doctor:update', id, data),
@@ -46,15 +47,52 @@ const api = {
   examSchedule: {
     generate: (date) => ipcRenderer.invoke('examSchedule:generate', date),
     list: (date) => ipcRenderer.invoke('examSchedule:list', date),
+    get: (id) => ipcRenderer.invoke('examSchedule:get', id),
     getByAppointment: (appointmentId) => ipcRenderer.invoke('examSchedule:getByAppointment', appointmentId),
     approve: (date, status) => ipcRenderer.invoke('examSchedule:approve', date, status),
+    deptConfirm: (id, status) => ipcRenderer.invoke('examSchedule:deptConfirm', id, status),
+    getDeptTasks: (department, date) => ipcRenderer.invoke('examSchedule:getDeptTasks', department, date),
     updateStatus: (id, status) => ipcRenderer.invoke('examSchedule:updateStatus', id, status)
   },
   examStatus: {
     update: (examScheduleId, status, data) => ipcRenderer.invoke('examStatus:update', examScheduleId, status, data),
     getByAppointment: (appointmentId) => ipcRenderer.invoke('examStatus:getByAppointment', appointmentId),
     listToday: () => ipcRenderer.invoke('examStatus:listToday'),
-    getAlerts: () => ipcRenderer.invoke('examStatus:getAlerts')
+    getAlerts: () => ipcRenderer.invoke('examStatus:getAlerts'),
+    getAllAlerts: (params) => ipcRenderer.invoke('examStatus:getAllAlerts', params),
+    markAlertRead: (id) => ipcRenderer.invoke('examStatus:markAlertRead', id),
+    markAllAlertsRead: () => ipcRenderer.invoke('examStatus:markAllAlertsRead')
+  },
+  adjustment: {
+    create: (data) => ipcRenderer.invoke('adjustment:create', data),
+    list: (params) => ipcRenderer.invoke('adjustment:list', params),
+    approve: (id, approved, remark) => ipcRenderer.invoke('adjustment:approve', id, approved, remark)
+  },
+  examResult: {
+    list: (appointmentId) => ipcRenderer.invoke('examResult:list', appointmentId),
+    create: (data) => ipcRenderer.invoke('examResult:create', data)
+  },
+  normalRange: {
+    list: (itemCode) => ipcRenderer.invoke('normalRange:list', itemCode),
+    check: (itemCode, value, gender, age) => ipcRenderer.invoke('normalRange:check', itemCode, value, gender, age)
+  },
+  supply: {
+    list: () => ipcRenderer.invoke('supply:list'),
+    create: (data) => ipcRenderer.invoke('supply:create', data),
+    update: (id, data) => ipcRenderer.invoke('supply:update', id, data),
+    adjustStock: (id, quantity, operator, remark) => ipcRenderer.invoke('supply:adjustStock', id, quantity, operator, remark),
+    usageLogs: (supplyId) => ipcRenderer.invoke('supply:usageLogs', supplyId)
+  },
+  chiefReview: {
+    list: (status) => ipcRenderer.invoke('chiefReview:list', status),
+    complete: (taskId, doctorId, note) => ipcRenderer.invoke('chiefReview:complete', taskId, doctorId, note)
+  },
+  statistics: {
+    getMonthlyData: (year, month) => ipcRenderer.invoke('statistics:getMonthlyData', year, month),
+    generateReportHTML: (year, month) => ipcRenderer.invoke('statistics:generateReportHTML', year, month)
+  },
+  satisfaction: {
+    submit: (data) => ipcRenderer.invoke('satisfaction:submit', data)
   }
 }
 
